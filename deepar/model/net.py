@@ -120,17 +120,69 @@ class DeepAR(nn.Module):
         else:
             decoder_hidden = hidden
             decoder_cell = cell
-            sample_mu = torch.zeros(batch_size, self.params.predict_steps, 
-                                    device=self.params.device)
-            sample_sigma = torch.zeros(batch_size, self.params.predict_steps,
-                                       device=self.params.device)
+            sample_mu = torch.zeros(
+                batch_size, self.params.predict_steps, device=self.params.device
+            )
+            sample_sigma = torch.zeros(
+                batch_size, self.params.predict_steps, device=self.params.device
+            )
             for t in range(self.params.predict_steps):
                 mu_de, sigma_de, decoder_hidden, decoder_cell = self(
                     x[self.params.predict_start + t].unsqueeze(0),
-                    id_batch, decoder_hidden, decoder_cell
+                    id_batch,
+                    decoder_hidden,
+                    decoder_cell,
                 )
                 sample_mu[:, t] = mu_de * v_batch[:, 0] + v_batch[:, 1]
                 sample_sigma[:, t] = sigma_de * v_batch[:, 0]
                 if t < (self.params.predict_steps - 1):
                     x[self.params.predict_start + t + 1, :, 0] = mu_de
         return sample_mu, sample_sigma
+
+
+def loss_fn(mu: Variable, sigma: Variable, labels: Variable):
+    """Compute log-likelihood which needs to be maximized. Ignored time steps where
+    labels are missing.
+
+    Args:
+        mu (Variable): [batch_size] estimated mean at time step t
+        sigma (Variable): [batch_size] - estimated standard deviation at time step t
+        labels (Variable): [batch_size] z_t
+    Returns:
+        loss: (Variable) average log-likelihood loss across the batch
+    """
+    zero_index = labels != 0
+    distribution = torch.distributions.normal.Normal(
+        mu[zero_index], sigma[zero_index]
+    )
+    likelihood = distribution.log_prob(labels[zero_index])
+    return -torch.mean(likelihood)
+
+
+# if relative is set to True, metrics are not normalized by the scale of labels
+def accuracy_ND(mu: torch.Tensor, labels: torch.Tensor, relative=False):
+    zero_index = labels != 0
+    if relative:
+        diff = torch.mean(torch.abs(mu[zero_index] - labels[zero_index])).item()
+        return [diff, 1]
+    else:
+        diff = torch.sum(torch.abs(mu[zero_index] - labels[zero_index])).item()
+        summation = torch.sum(torch.abs(labels[zero_index])).item()
+        return [diff, summation]
+
+
+def accuracy_RMSE(mu: torch.Tensor, labels: torch.Tensor, relative=False):
+    zero_index = labels != 0
+    diff = torch.sum(
+        torch.mul(
+            (mu[zero_index] - labels[zero_index]),
+            (mu[zero_index] - labels[zero_index]),
+        )
+    ).item()
+    if relative:
+        return [diff, torch.sum(zero_index).item(), torch.sum(zero_index).item()]
+    else:
+        summation = torch.sum(torch.abs(labels[zero_index])).item()
+        if summation == 0:
+            logger.error("Summation denominator error! ")
+        return [diff, summation, torch.sum(zero_index).item()]

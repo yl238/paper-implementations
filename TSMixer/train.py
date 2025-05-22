@@ -6,7 +6,7 @@ from plotting import plot_forecasts
 
 if __name__ == "__main__":
     df = pd.read_parquet(
-        "data/CAFR_sales_weekly_sales_sales_06_ELECTRICAL HEATING AND COOLING.parquet"
+        "data/sales.parquet"
     )
     df["unique_id"] = df["SourceID"] + "_" + df["SiteCode"]
 

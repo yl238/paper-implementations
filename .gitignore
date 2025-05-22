@@ -4,6 +4,10 @@ prompt.txt
 data/
 *.mp3
 *.wav
+*.csv
+*.parquet
+*.ipynb
+checkpoints/
 video_summary.md
 # Byte-compiled / optimized / DLL files
 __pycache__/

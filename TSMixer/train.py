@@ -4,18 +4,19 @@ from neuralforecast.losses.pytorch import MQLoss
 from neuralforecast.models import TSMixer
 from plotting import plot_forecasts
 
-if __name__ == "__main__":
-    df = pd.read_parquet(
-        "data/sales.parquet"
-    )
-    df["unique_id"] = df["SourceID"] + "_" + df["SiteCode"]
 
+def generate_training_data(
+    input_file, category, start_date, end_date, n_samples=1000
+):
+    df = pd.read_parquet(input_file)
+
+    df["unique_id"] = df["SourceID"] + "_" + df["SiteCode"]
     unique_product_sites = df[
         ["unique_id", "SourceID", "SiteName"]
     ].drop_duplicates()
 
     df["WeekStart"] = pd.to_datetime(df["WeekStart"])
-    df_val = df[(df["WeekStart"] > "2021-06-01") & (df["WeekStart"] <= "2025-01-01")]
+    df_val = df[(df["WeekStart"] > start_date) & (df["WeekStart"] <= end_date)]
 
     df_total_sales = (
         df_val.groupby("unique_id")
@@ -23,34 +24,35 @@ if __name__ == "__main__":
         .sort_values(by="Quantity", ascending=False)
     )
     sampled_ids = (
-        df_total_sales[df_total_sales["Quantity"] > 10].sample(10000).index.values
+        df_total_sales[df_total_sales["Quantity"] > 0].sample(n_samples).index.values
     )
-
     df_val[df_val.unique_id.isin(tuple(sampled_ids))][
         ["SourceID", "SiteCode", "SiteName"]
-    ].drop_duplicates().to_csv("test_ids.csv", index=False)
+    ].drop_duplicates().to_csv(f"data/{category}_sample_ids.csv", index=False)
 
     df_section = df_val[["WeekStart", "Quantity", "unique_id"]]
-    f_section = df_section[df_section["unique_id"].isin(tuple(sampled_ids))]
+    df_section = df_section[df_section["unique_id"].isin(tuple(sampled_ids))]
 
     df_section.reset_index().drop(columns=["index"], inplace=True)
     df_section.columns = ["ds", "y", "unique_id"]
 
     df_section.groupby("unique_id").agg({"y": "sum"}).sort_values(
         by="y", ascending=False
-    ).to_csv("product_sales.csv")
+    ).to_csv(f"data/{category}_total_product_sales.csv")
 
-    Y_train_df = df_section[
-        df_section.ds < df_section["ds"].values[-52]
-    ].reset_index(drop=True)
-    Y_test_df = df_section[
-        df_section.ds >= df_section["ds"].values[-52]
-    ].reset_index(drop=True)
+    return df_section
+
+
+def train_model(
+    df, n_series, input_size=52, forecast_horizon=52, n_test=52, model_prefix="test"
+):
+    Y_train_df = df[df.ds < df["ds"].values[-n_test]].reset_index(drop=True)
+    Y_test_df = df[df.ds >= df["ds"].values[-n_test]].reset_index(drop=True)
 
     model = TSMixer(
-        h=52,
-        input_size=52,
-        n_series=10000,
+        h=forecast_horizon,
+        input_size=input_size,
+        n_series=n_series,
         n_block=4,
         ff_dim=4,
         dropout=0.1,
@@ -64,23 +66,54 @@ if __name__ == "__main__":
         batch_size=32,
     )
     fcst = NeuralForecast(models=[model], freq="7D")
-    fcst.fit(df=Y_train_df, val_size=52)
+    fcst.fit(df=Y_train_df, val_size=n_test)
 
-    forecasts = fcst.predict(futr_df=Y_test_df)
-    forecasts.to_parquet("forecasts.parquet")
+    fcst.save(
+        path=f"./checkpoints/{model_prefix}_run/",
+        model_index=None,
+        overwrite=True,
+        save_dataset=True,
+    )
+    return fcst, Y_train_df, Y_test_df
 
-    unique_ids = forecasts["unique_id"].unique()
+
+def threshold_zero(forecasts):
     forecasts["TSMixer-median"][forecasts["TSMixer-median"] < 0] = 0
     forecasts["TSMixer-hi-90"][forecasts["TSMixer-hi-90"] < 0] = 0
     forecasts["TSMixer-lo-90"][forecasts["TSMixer-lo-90"] < 0] = 0
+    return forecasts
 
-    id = "100110032_1461"
-    source = unique_product_sites[unique_product_sites.unique_id == id][
-        "SourceID"
-    ].values[0]
-    site = unique_product_sites[unique_product_sites.unique_id == id][
-        "SiteName"
-    ].values[0]
+
+if __name__ == "__main__":
+    file = "data/CAFR_sales_weekly_sales_sales_13_LIGHTING.parquet"
+
+    category = "13_LIGHTING"
+    start_date = "2021-06-01"
+    end_date = "2025-01-01"
+
+    n_samples = 20000
+    h = 52
+
+    df = generate_training_data(
+        input_file=file,
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
+        n_samples=n_samples,
+    )
+
+    model, Y_train_df, Y_test_df = train_model(
+        df, n_series=n_samples, forecast_horizon=h, n_test=h, model_prefix=category
+    )
+
+    forecasts = model.predict(futr_df=Y_test_df)
+    forecasts.to_parquet(f"data/{category}_forecasts.parquet")
+
+    forecasts = threshold_zero(forecasts)
+
+    id = Y_test_df["unique_id"].values[0]
+    source = id.split("_")[0]
+    site = id.split("_")[1]
 
     plot_forecasts(
         Y_train_df,
@@ -89,5 +122,5 @@ if __name__ == "__main__":
         id=id,
         sku=source,
         site=site,
-        filename=f"forecasts_{id}.png",
+        filename=f"figures/{category}_forecasts_{id}.png",
     )

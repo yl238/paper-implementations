@@ -25,4 +25,4 @@ def plot_forecasts(Y_train_df, Y_test_df, forecasts, id, sku, site, filename=Non
     ax.legend(prop={"size": 15})
     ax.grid()
     if filename:
-        fig.savefig(filename, bbox_inches='tight', transparent=True)
+        fig.savefig(filename, bbox_inches='tight')

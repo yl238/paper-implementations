@@ -6,7 +6,7 @@ from plotting import plot_forecasts
 
 
 def generate_training_data(
-    input_file, category, start_date, end_date, n_samples=1000
+    input_file, category, start_date, end_date, sample=True, n_samples=None, samples=None
 ):
     df = pd.read_parquet(input_file)
 
@@ -17,21 +17,24 @@ def generate_training_data(
 
     df["WeekStart"] = pd.to_datetime(df["WeekStart"])
     df_val = df[(df["WeekStart"] > start_date) & (df["WeekStart"] <= end_date)]
-
+    df_val = df_val[df_val['Quantity'] > 0]
     df_total_sales = (
         df_val.groupby("unique_id")
         .agg({"Quantity": "sum"})
         .sort_values(by="Quantity", ascending=False)
     )
-    sampled_ids = (
-        df_total_sales[df_total_sales["Quantity"] > 0].sample(n_samples).index.values
-    )
-    df_val[df_val.unique_id.isin(tuple(sampled_ids))][
+    if sample:
+        if n_samples:
+            sampled_ids = (
+                df_total_sales[df_total_sales["Quantity"] > 0].sample(n_samples).index.values
+            )
+        df_section = df_section[df_val["unique_id"].isin(tuple(sampled_ids))]
+        df_val[df_val.unique_id.isin(tuple(sampled_ids))][
         ["SourceID", "SiteCode", "SiteName"]
-    ].drop_duplicates().to_csv(f"data/{category}_sample_ids.csv", index=False)
+        ].drop_duplicates().to_csv(f"data/{category}_sample_ids.csv", index=False)
 
     df_section = df_val[["WeekStart", "Quantity", "unique_id"]]
-    df_section = df_section[df_section["unique_id"].isin(tuple(sampled_ids))]
+    
 
     df_section.reset_index().drop(columns=["index"], inplace=True)
     df_section.columns = ["ds", "y", "unique_id"]
@@ -77,10 +80,10 @@ def train_model(
     return fcst, Y_train_df, Y_test_df
 
 
-def threshold_zero(forecasts):
-    forecasts["TSMixer-median"][forecasts["TSMixer-median"] < 0] = 0
-    forecasts["TSMixer-hi-90"][forecasts["TSMixer-hi-90"] < 0] = 0
-    forecasts["TSMixer-lo-90"][forecasts["TSMixer-lo-90"] < 0] = 0
+def threshold_zero(forecasts, lower=0):
+    """Clip negative predictions to zero."""
+    cols = ["TSMixer-median", "TSMixer-hi-90", "TSMixer-lo-90"]
+    forecasts[cols] = forecasts[cols].clip(lower=lower)
     return forecasts
 
 

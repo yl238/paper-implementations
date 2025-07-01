@@ -2,12 +2,12 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-def plot_forecasts(Y_train_df, Y_test_df, forecasts, id, sku, site, filename=None):
+def plot_forecasts(Y_train_df, forecasts, id, sku, site, filename=None):
     # Plot predictions
     fig, ax = plt.subplots(1, 1, figsize=(20, 7))
-    Y_hat_df = forecasts.reset_index(drop=False).drop(columns=["unique_id", "ds"])
-    plot_df = pd.concat([Y_test_df, Y_hat_df], axis=1)
-    plot_df = pd.concat([Y_train_df, plot_df])
+    # Y_hat_df = forecasts.reset_index(drop=False).drop(columns=["unique_id", "ds"])
+    #plot_df = pd.concat([Y_test_df, Y_hat_df], axis=1)
+    plot_df = pd.concat([Y_train_df, forecasts])
 
     plot_df = plot_df[plot_df.unique_id == id].drop("unique_id", axis=1)
     plt.plot(plot_df["ds"], plot_df["y"], c="black", label="True")
